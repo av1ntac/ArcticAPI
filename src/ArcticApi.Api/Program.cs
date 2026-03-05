@@ -4,6 +4,7 @@ using ArcticApi.Api;
 using ArcticApi.Logic.Abstractions;
 using ArcticApi.Logic.Services;
 using ArcticApi.Model;
+using ArcticApi.Orm.EventLogging;
 using ArcticApi.Orm.Repositories;
 using Microsoft.Extensions.Options;
 
@@ -25,6 +26,7 @@ builder.Services.AddSingleton<IAmazonDynamoDB>(serviceProvider =>
     var credentials = new Amazon.Runtime.BasicAWSCredentials("local", "local");
     return new AmazonDynamoDBClient(credentials, config);
 });
+builder.Services.AddScoped<DynamoDbEventLogger>();
 builder.Services.AddScoped<IKnowledgeRepository, DynamoDbKnowledgeRepository>();
 builder.Services.AddScoped<IPlayerRepository, DynamoDbPlayerRepository>();
 builder.Services.AddScoped<KnowledgeService>();

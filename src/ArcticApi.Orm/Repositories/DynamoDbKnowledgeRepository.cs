@@ -2,11 +2,12 @@ using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.DocumentModel;
 using ArcticApi.Logic.Abstractions;
 using ArcticApi.Model;
+using ArcticApi.Orm.EventLogging;
 using System.Globalization;
 
 namespace ArcticApi.Orm.Repositories;
 
-public sealed class DynamoDbKnowledgeRepository(IAmazonDynamoDB dynamoDb) : IKnowledgeRepository
+public sealed class DynamoDbKnowledgeRepository(IAmazonDynamoDB dynamoDb, DynamoDbEventLogger eventLogger) : IKnowledgeRepository
 {
     private const string TableName = "knowledge";
 
@@ -22,6 +23,7 @@ public sealed class DynamoDbKnowledgeRepository(IAmazonDynamoDB dynamoDb) : IKno
             output.AddRange(page.Select(MapKnowledge));
         } while (!search.IsDone);
 
+        await eventLogger.LogAsync("LoadAll", nameof(Knowledge), null, null, output, cancellationToken);
         return output;
     }
 
@@ -29,12 +31,18 @@ public sealed class DynamoDbKnowledgeRepository(IAmazonDynamoDB dynamoDb) : IKno
     {
         var table = Table.LoadTable(dynamoDb, TableName);
         var doc = await table.GetItemAsync(id, cancellationToken);
-        return doc is null ? null : MapKnowledge(doc);
+        var knowledge = doc is null ? null : MapKnowledge(doc);
+
+        await eventLogger.LogAsync("LoadById", nameof(Knowledge), id, null, knowledge, cancellationToken);
+        return knowledge;
     }
 
     public async Task<Knowledge> UpsertAsync(Knowledge knowledge, CancellationToken cancellationToken = default)
     {
         var table = Table.LoadTable(dynamoDb, TableName);
+        var existing = await table.GetItemAsync(knowledge.Id, cancellationToken);
+        var beforeState = existing is null ? null : MapKnowledge(existing);
+
         var doc = new Document
         {
             ["Id"] = knowledge.Id,
@@ -47,6 +55,7 @@ public sealed class DynamoDbKnowledgeRepository(IAmazonDynamoDB dynamoDb) : IKno
         };
 
         await table.PutItemAsync(doc, cancellationToken);
+        await eventLogger.LogAsync("Upsert", nameof(Knowledge), knowledge.Id, beforeState, knowledge, cancellationToken);
         return knowledge;
     }
 
@@ -56,10 +65,13 @@ public sealed class DynamoDbKnowledgeRepository(IAmazonDynamoDB dynamoDb) : IKno
         var existing = await table.GetItemAsync(id, cancellationToken);
         if (existing is null)
         {
+            await eventLogger.LogAsync("Delete", nameof(Knowledge), id, null, null, cancellationToken);
             return false;
         }
 
+        var beforeState = MapKnowledge(existing);
         await table.DeleteItemAsync(id, cancellationToken);
+        await eventLogger.LogAsync("Delete", nameof(Knowledge), id, beforeState, null, cancellationToken);
         return true;
     }
 

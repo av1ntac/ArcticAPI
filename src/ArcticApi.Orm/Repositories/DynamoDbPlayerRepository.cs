@@ -2,10 +2,11 @@ using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.DocumentModel;
 using ArcticApi.Logic.Abstractions;
 using ArcticApi.Model;
+using ArcticApi.Orm.EventLogging;
 
 namespace ArcticApi.Orm.Repositories;
 
-public sealed class DynamoDbPlayerRepository(IAmazonDynamoDB dynamoDb) : IPlayerRepository
+public sealed class DynamoDbPlayerRepository(IAmazonDynamoDB dynamoDb, DynamoDbEventLogger eventLogger) : IPlayerRepository
 {
     private const string TableName = "players";
 
@@ -21,6 +22,7 @@ public sealed class DynamoDbPlayerRepository(IAmazonDynamoDB dynamoDb) : IPlayer
             output.AddRange(page.Select(MapPlayer));
         } while (!search.IsDone);
 
+        await eventLogger.LogAsync("LoadAll", nameof(Player), null, null, output, cancellationToken);
         return output;
     }
 
@@ -28,12 +30,18 @@ public sealed class DynamoDbPlayerRepository(IAmazonDynamoDB dynamoDb) : IPlayer
     {
         var table = Table.LoadTable(dynamoDb, TableName);
         var doc = await table.GetItemAsync(id, cancellationToken);
-        return doc is null ? null : MapPlayer(doc);
+        var player = doc is null ? null : MapPlayer(doc);
+
+        await eventLogger.LogAsync("LoadById", nameof(Player), id, null, player, cancellationToken);
+        return player;
     }
 
     public async Task<Player> UpsertAsync(Player player, CancellationToken cancellationToken = default)
     {
         var table = Table.LoadTable(dynamoDb, TableName);
+        var existing = await table.GetItemAsync(player.Id, cancellationToken);
+        var beforeState = existing is null ? null : MapPlayer(existing);
+
         var knowledgeList = new DynamoDBList();
         foreach (var knowledge in player.Knowledge)
         {
@@ -49,6 +57,7 @@ public sealed class DynamoDbPlayerRepository(IAmazonDynamoDB dynamoDb) : IPlayer
         };
 
         await table.PutItemAsync(doc, cancellationToken);
+        await eventLogger.LogAsync("Upsert", nameof(Player), player.Id, beforeState, player, cancellationToken);
         return player;
     }
 
@@ -58,10 +67,13 @@ public sealed class DynamoDbPlayerRepository(IAmazonDynamoDB dynamoDb) : IPlayer
         var existing = await table.GetItemAsync(id, cancellationToken);
         if (existing is null)
         {
+            await eventLogger.LogAsync("Delete", nameof(Player), id, null, null, cancellationToken);
             return false;
         }
 
+        var beforeState = MapPlayer(existing);
         await table.DeleteItemAsync(id, cancellationToken);
+        await eventLogger.LogAsync("Delete", nameof(Player), id, beforeState, null, cancellationToken);
         return true;
     }
 
