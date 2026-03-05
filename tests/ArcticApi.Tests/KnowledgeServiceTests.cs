@@ -7,6 +7,8 @@ namespace ArcticApi.Tests;
 
 public class KnowledgeServiceTests
 {
+    private const string AuditUserId = "11111111-1111-1111-1111-111111111111";
+
     [Fact]
     public async Task UpsertAsync_StoresKnowledgeInRepository()
     {
@@ -19,6 +21,35 @@ public class KnowledgeServiceTests
         var stored = await service.GetByIdAsync(knowledge.Id);
         Assert.NotNull(stored);
         Assert.Equal("Ritual", stored.Title);
+        Assert.Equal(AuditUserId, stored.CreatedBy);
+        Assert.Equal(AuditUserId, stored.ModifiedBy);
+        Assert.NotEqual(default, stored.CreatedAt);
+        Assert.NotEqual(default, stored.ModifiedAt);
+    }
+
+    [Fact]
+    public async Task UpsertAsync_OnExistingKnowledge_PreservesCreatedAuditAndRefreshesModifiedAudit()
+    {
+        var repository = new InMemoryKnowledgeRepository();
+        var service = new KnowledgeService(repository);
+
+        var initial = new Knowledge { Title = "Ritual", Text = "Use at dusk." };
+        await service.UpsertAsync(initial);
+
+        var firstSaved = await service.GetByIdAsync(initial.Id);
+        Assert.NotNull(firstSaved);
+
+        await Task.Delay(5);
+
+        initial.Text = "Use at dawn.";
+        await service.UpsertAsync(initial);
+
+        var secondSaved = await service.GetByIdAsync(initial.Id);
+        Assert.NotNull(secondSaved);
+        Assert.Equal(firstSaved.CreatedBy, secondSaved.CreatedBy);
+        Assert.Equal(firstSaved.CreatedAt, secondSaved.CreatedAt);
+        Assert.Equal(AuditUserId, secondSaved.ModifiedBy);
+        Assert.True(secondSaved.ModifiedAt >= firstSaved.ModifiedAt);
     }
 
     [Fact]
